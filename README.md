@@ -130,6 +130,10 @@ A: No. The encrypted files are only downloadable with VIP, and the ekey API requ
 - QQ Music desktop client (logged in with VIP) — only needed for `auth` and first-time ekey fetch
 - After keys are cached, QQ Music is not needed
 
+## Acknowledgments
+
+- [linux.do](https://linux.do) — Community & inspiration
+
 ## License
 
 MIT
@@ -223,6 +227,10 @@ A: 不能. 加密文件只有 VIP 才能下载, ekey 接口也需要 VIP 认证.
 2. **获取密钥** — 用 cookie 调用 QQ 音乐 API 获取每首歌的解密密钥 (ekey), 自动缓存到本地
 3. **解密** — QMC2 RC4 算法 (与 QQ 音乐客户端内部使用的相同算法)
 4. **写标签** — 从 QQ 音乐公开 API 获取元信息 (无需认证) 写入文件
+
+## 致谢
+
+- [linux.do](https://linux.do) — 社区支持
 
 ## 系统要求
 
