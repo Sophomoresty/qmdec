@@ -137,6 +137,17 @@ def cmd_fetch_ekey(args: argparse.Namespace) -> None:
     print(json.dumps({"ok": bool(ekey), "ekey": ekey or "", "length": len(ekey or "")}))
 
 
+def cmd_auth(args: argparse.Namespace) -> None:
+    from .auth import extract_cookie_from_process
+    result = extract_cookie_from_process()
+    if result["ok"]:
+        save_config({"cookie": result["cookie"], "uin": result["uin"]})
+        print(json.dumps({"ok": True, "uin": result["uin"], "config_path": str(CONFIG_FILE)}))
+    else:
+        print(json.dumps(result))
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="um2", description="QQ Music musicex v1 decryptor")
     sub = parser.add_subparsers(dest="command")
@@ -155,6 +166,8 @@ def main():
     p_ekey.add_argument("song_mid")
     p_ekey.add_argument("file_mid")
 
+    sub.add_parser("auth", help="Auto-extract cookie from running QQ Music")
+
     args = parser.parse_args()
     if args.command == "decrypt":
         cmd_decrypt(args)
@@ -164,6 +177,8 @@ def main():
         cmd_init(args)
     elif args.command == "fetch-ekey":
         cmd_fetch_ekey(args)
+    elif args.command == "auth":
+        cmd_auth(args)
     else:
         parser.print_help()
         sys.exit(1)
