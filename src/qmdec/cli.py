@@ -9,6 +9,7 @@ from pathlib import Path
 from .crypto import derive_key
 from .musicex import get_ekey, parse_file_tail, EKEY_CACHE_DIR
 from .rc4 import RC4Cipher
+from .map_cipher import MapCipher
 
 CONFIG_DIR = Path.home() / ".config" / "qmdec"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -52,6 +53,13 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = 
             return {"ok": False, "error": "no ekey available. Run: qmdec auth", "file": str(filepath)}
         return {"ok": False, "error": "empty ekey (cookie may be expired). Run: qmdec auth", "file": str(filepath)}
 
+    return _decrypt_with_ekey(filepath, output_dir, ekey_b64, meta["audio_size"],
+                              meta.get("song_mid", ""), no_tag)
+
+
+def _decrypt_with_ekey(filepath: Path, output_dir: Path, ekey_b64: str,
+                       audio_size: int, song_mid: str, no_tag: bool) -> dict:
+    """Decrypt a file using a known ekey (works with or without musicex tail)."""
     try:
         raw_key_dec = base64.b64decode(ekey_b64)
     except Exception:
@@ -61,11 +69,15 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = 
     if final_key is None:
         return {"ok": False, "error": "key derivation failed", "file": str(filepath)}
 
-    cipher = RC4Cipher(final_key)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    audio_size = meta["audio_size"]
+    def make_cipher(key):
+        if len(key) > 300:
+            return RC4Cipher(key)
+        return MapCipher(key)
 
-    preview_cipher = RC4Cipher(final_key)
+    cipher = make_cipher(final_key)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    preview_cipher = make_cipher(final_key)
     with open(filepath, "rb") as fin:
         preview = bytearray(fin.read(min(16, audio_size)))
     preview_cipher.decrypt(preview, 0)
@@ -84,10 +96,10 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = 
             offset += read_size
 
     tag_result = None
-    if not no_tag and meta.get("song_mid"):
+    if not no_tag and song_mid:
         try:
             from .metadata import write_metadata
-            tag_result = write_metadata(out_path, meta["song_mid"])
+            tag_result = write_metadata(out_path, song_mid)
         except Exception as e:
             tag_result = {"ok": False, "error": str(e)}
 
@@ -203,6 +215,126 @@ def cmd_fetch_ekey(args: argparse.Namespace) -> None:
     print(json.dumps({"ok": bool(ekey), "ekey": ekey or "", "length": len(ekey or "")}))
 
 
+def cmd_search(args: argparse.Namespace) -> None:
+    config = load_config()
+    cookie = config.get("cookie", "")
+    uin = config.get("uin", "")
+    if not cookie:
+        print(json.dumps({"ok": False, "error": "not authenticated. Run: qmdec auth"}))
+        sys.exit(1)
+
+    from .download import search_songs
+    songs = search_songs(args.keyword, cookie, uin, limit=args.limit)
+    if not songs:
+        print(json.dumps({"ok": False, "error": "no results"}))
+        sys.exit(1)
+
+    results = []
+    for i, s in enumerate(songs):
+        results.append({
+            "n": i + 1,
+            "title": s["title"],
+            "singer": s["singer"],
+            "album": s["album"],
+            "song_mid": s["song_mid"],
+            "quality": {
+                "flac": f"{s['size_flac'] / 1024 / 1024:.1f}MB" if s["size_flac"] else "-",
+                "320k": f"{s['size_320'] / 1024 / 1024:.1f}MB" if s["size_320"] else "-",
+                "128k": f"{s['size_128'] / 1024 / 1024:.1f}MB" if s["size_128"] else "-",
+            },
+        })
+        print(f"  [{i+1}] {s['title']} - {s['singer']} ({s['album']})", file=sys.stderr)
+
+    print(json.dumps({"ok": True, "results": results}, ensure_ascii=False, indent=2))
+
+
+def cmd_download(args: argparse.Namespace) -> None:
+    config = load_config()
+    cookie = config.get("cookie", "")
+    uin = config.get("uin", "")
+    if not cookie:
+        print(json.dumps({"ok": False, "error": "not authenticated. Run: qmdec auth"}))
+        sys.exit(1)
+
+    from .download import search_songs, get_download_info, download_file
+    import tempfile
+
+    songs = search_songs(args.keyword, cookie, uin, limit=args.pick)
+    if not songs:
+        print(json.dumps({"ok": False, "error": "no results"}))
+        sys.exit(1)
+
+    pick_idx = min(args.pick, len(songs)) - 1
+    song = songs[pick_idx]
+    print(f"  Downloading: {song['title']} - {song['singer']} [{args.quality}]", file=sys.stderr)
+
+    info = get_download_info(song["song_mid"], song["media_mid"], args.quality, cookie, uin)
+    if not info:
+        print(json.dumps({"ok": False, "error": "cannot get download URL (VIP required for this quality)"}))
+        sys.exit(1)
+
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.quality == "flac" and info["ekey"]:
+        tmp_path = output_dir / f"{song['title']} - {song['singer']}.mflac"
+        print(f"  Fetching encrypted file...", file=sys.stderr)
+
+        def progress(downloaded, total):
+            if total > 0:
+                pct = downloaded * 100 // total
+                print(f"\r  [{pct}%] {downloaded // 1024}KB / {total // 1024}KB", end="", file=sys.stderr)
+
+        ok = download_file(info["url"], tmp_path, callback=progress)
+        print("", file=sys.stderr)
+
+        if not ok:
+            print(json.dumps({"ok": False, "error": "download failed"}))
+            sys.exit(1)
+
+        from .musicex import _cache_ekey, EKEY_CACHE_DIR
+        _cache_ekey(song["song_mid"], info["ekey"])
+
+        print(f"  Decrypting...", file=sys.stderr)
+        audio_size = tmp_path.stat().st_size
+        result = _decrypt_with_ekey(tmp_path, output_dir, info["ekey"], audio_size,
+                                    song["song_mid"], args.no_tag)
+        tmp_path.unlink(missing_ok=True)
+
+        if result["ok"]:
+            print(json.dumps({"ok": True, "output": result["output"], "format": result["format"],
+                             "title": song["title"], "singer": song["singer"], "tag": result.get("tag")}))
+        else:
+            print(json.dumps(result))
+            sys.exit(1)
+    else:
+        ext = ".mp3" if args.quality in ("320", "128") else ".flac"
+        out_path = output_dir / f"{song['title']} - {song['singer']}{ext}"
+        print(f"  Downloading directly...", file=sys.stderr)
+
+        def progress(downloaded, total):
+            if total > 0:
+                pct = downloaded * 100 // total
+                print(f"\r  [{pct}%] {downloaded // 1024}KB / {total // 1024}KB", end="", file=sys.stderr)
+
+        ok = download_file(info["url"], out_path, callback=progress)
+        print("", file=sys.stderr)
+
+        if not ok:
+            print(json.dumps({"ok": False, "error": "download failed"}))
+            sys.exit(1)
+
+        tag_result = None
+        if not args.no_tag:
+            try:
+                from .metadata import write_metadata
+                tag_result = write_metadata(out_path, song["song_mid"])
+            except Exception as e:
+                tag_result = {"ok": False, "error": str(e)}
+
+        print(json.dumps({"ok": True, "output": str(out_path), "format": ext[1:],
+                         "title": song["title"], "singer": song["singer"], "tag": tag_result}))
+
 def main():
     parser = argparse.ArgumentParser(prog="qmdec", description="QQ Music encrypted file decryptor")
     sub = parser.add_subparsers(dest="command")
@@ -211,6 +343,17 @@ def main():
     p_decrypt.add_argument("input", help="File or directory to decrypt")
     p_decrypt.add_argument("-o", "--output", help="Output directory")
     p_decrypt.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
+
+    p_search = sub.add_parser("search", help="Search songs")
+    p_search.add_argument("keyword", help="Search keyword")
+    p_search.add_argument("-n", "--limit", type=int, default=10, help="Max results")
+
+    p_dl = sub.add_parser("download", help="Search, download, decrypt and tag")
+    p_dl.add_argument("keyword", help="Search keyword or song_mid")
+    p_dl.add_argument("-o", "--output", help="Output directory", default=".")
+    p_dl.add_argument("-q", "--quality", choices=["flac", "320", "128"], default="flac")
+    p_dl.add_argument("-n", "--pick", type=int, default=1, help="Pick Nth result (default: 1st)")
+    p_dl.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
 
     sub.add_parser("auth", help="Auto-extract cookie from running QQ Music")
     sub.add_parser("doctor", help="Check configuration status")
@@ -229,6 +372,8 @@ def main():
     args = parser.parse_args()
     commands = {
         "decrypt": cmd_decrypt,
+        "search": cmd_search,
+        "download": cmd_download,
         "auth": cmd_auth,
         "doctor": cmd_doctor,
         "cache-keys": cmd_cache_keys,
