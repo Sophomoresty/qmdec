@@ -1,4 +1,4 @@
-"""um2 CLI - QQ Music musicex v1 decryptor."""
+"""qmdec CLI - QQ Music musicex v1 decryptor."""
 
 import argparse
 import base64
@@ -11,7 +11,7 @@ from .crypto import derive_key
 from .musicex import fetch_ekey, parse_musicex_tail
 from .rc4 import RC4Cipher
 
-CONFIG_DIR = Path.home() / ".config" / "um2"
+CONFIG_DIR = Path.home() / ".config" / "qmdec"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SUPPORTED_EXTS = {".mflac", ".mgg"}
 
@@ -125,7 +125,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     }
     checks["ready"] = all(checks.values())
     if not checks["ready"]:
-        checks["fix"] = f"Run: um2 init --cookie '<cookie>' --uin '<uin>'"
+        checks["fix"] = f"Run: qmdec init --cookie '<cookie>' --uin '<uin>'"
     print(json.dumps(checks, indent=2))
 
 
@@ -155,7 +155,7 @@ def cmd_auth(args: argparse.Namespace) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="um2", description="QQ Music musicex v1 decryptor")
+    parser = argparse.ArgumentParser(prog="qmdec", description="QQ Music musicex v1 decryptor")
     sub = parser.add_subparsers(dest="command")
 
     p_decrypt = sub.add_parser("decrypt", help="Decrypt .mflac/.mgg files")

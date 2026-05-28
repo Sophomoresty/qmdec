@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "um2"
+name = "qmdec"
 version = "0.1.0"
 description = "QQ Music musicex v1 offline decryptor"
 requires-python = ">=3.10"
 dependencies = ["music-tag>=0.4.3", "Pillow>=9.0"]
 
 [project.scripts]
-um2 = "um2.cli:main"
+qmdec = "qmdec.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/um2"]
+packages = ["src/qmdec"]
