@@ -7,7 +7,7 @@ name = "um2"
 version = "0.1.0"
 description = "QQ Music musicex v1 offline decryptor"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["music-tag>=0.4.3", "Pillow>=9.0"]
 
 [project.scripts]
 um2 = "um2.cli:main"

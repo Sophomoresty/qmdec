@@ -37,7 +37,7 @@ def sniff_ext(data: bytes) -> str:
     return ".bin"
 
 
-def decrypt_file(filepath: Path, output_dir: Path, config: dict) -> dict:
+def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = False) -> dict:
     meta = parse_musicex_tail(filepath)
     if meta is None:
         return {"ok": False, "error": "not a musicex file", "file": str(filepath)}
@@ -82,7 +82,12 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict) -> dict:
             fout.write(buf)
             offset += read_size
 
-    return {"ok": True, "file": str(filepath), "output": str(out_path), "format": ext[1:]}
+    tag_result = None
+    if not no_tag:
+        from .metadata import write_metadata
+        tag_result = write_metadata(out_path, meta["song_mid"])
+
+    return {"ok": True, "file": str(filepath), "output": str(out_path), "format": ext[1:], "tag": tag_result}
 
 
 def cmd_decrypt(args: argparse.Namespace) -> None:
@@ -101,8 +106,9 @@ def cmd_decrypt(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     results = []
+    no_tag = getattr(args, 'no_tag', False)
     for f in sorted(files):
-        r = decrypt_file(f, output_dir, config)
+        r = decrypt_file(f, output_dir, config, no_tag=no_tag)
         results.append(r)
         status = "ok" if r["ok"] else f"FAIL: {r['error']}"
         print(f"  {f.name} -> {status}", file=sys.stderr)
@@ -155,6 +161,7 @@ def main():
     p_decrypt = sub.add_parser("decrypt", help="Decrypt .mflac/.mgg files")
     p_decrypt.add_argument("input", help="File or directory to decrypt")
     p_decrypt.add_argument("-o", "--output", help="Output directory (default: same as input)")
+    p_decrypt.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
 
     p_doctor = sub.add_parser("doctor", help="Check configuration")
 
