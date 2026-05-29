@@ -299,14 +299,48 @@ def cmd_download(args: argparse.Namespace) -> None:
         audio_size = tmp_path.stat().st_size
         result = _decrypt_with_ekey(tmp_path, output_dir, info["ekey"], audio_size,
                                     song["song_mid"], args.no_tag)
+
+        # Verify decryption succeeded (check output file header)
+        decrypt_ok = False
+        if result["ok"]:
+            out_file = Path(result["output"])
+            if out_file.exists():
+                with open(out_file, "rb") as f:
+                    header = f.read(4)
+                if header in (b"fLaC", b"OggS", b"ID3\x03") or (len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0):
+                    decrypt_ok = True
+                else:
+                    out_file.unlink(missing_ok=True)
+
         tmp_path.unlink(missing_ok=True)
 
-        if result["ok"]:
+        if decrypt_ok:
             print(json.dumps({"ok": True, "output": result["output"], "format": result["format"],
                              "title": song["title"], "singer": song["singer"], "tag": result.get("tag")}))
         else:
-            print(json.dumps(result))
-            sys.exit(1)
+            # Fallback: download as 320k MP3 (unencrypted)
+            print(f"  FLAC decrypt failed, falling back to 320k MP3...", file=sys.stderr)
+            info_320 = get_download_info(song["song_mid"], song["media_mid"], "320", cookie, uin)
+            if info_320 and not info_320.get("ekey"):
+                out_path = output_dir / f"{song['title']} - {song['singer']}.mp3"
+                ok = download_file(info_320["url"], out_path, callback=progress)
+                print("", file=sys.stderr)
+                if ok:
+                    tag_result = None
+                    if not args.no_tag:
+                        try:
+                            from .metadata import write_metadata
+                            tag_result = write_metadata(out_path, song["song_mid"])
+                        except Exception as e:
+                            tag_result = {"ok": False, "error": str(e)}
+                    print(json.dumps({"ok": True, "output": str(out_path), "format": "mp3",
+                                     "fallback": True, "title": song["title"], "singer": song["singer"], "tag": tag_result}))
+                else:
+                    print(json.dumps({"ok": False, "error": "fallback download failed"}))
+                    sys.exit(1)
+            else:
+                print(json.dumps({"ok": False, "error": "FLAC decrypt failed and no 320k fallback available"}))
+                sys.exit(1)
     else:
         ext = ".mp3" if args.quality in ("320", "128") else ".flac"
         out_path = output_dir / f"{song['title']} - {song['singer']}{ext}"
