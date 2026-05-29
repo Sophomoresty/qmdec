@@ -22,8 +22,12 @@ class RC4Cipher:
         for v in self.key:
             if v == 0:
                 continue
-            nh = h * v
-            if nh > 0xFFFFFFFF or nh == 0 or nh <= h:
+            # QQMusic's native implementation stores this accumulator in a
+            # uint32.  The wraparound value is part of the cipher state: some
+            # valid 512-byte FLAC keys (for example 五月天/倔强) continue after
+            # overflow instead of stopping at the first >uint32 product.
+            nh = (h * v) & 0xFFFFFFFF
+            if nh == 0 or nh <= h:
                 break
             h = nh
         return h

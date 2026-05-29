@@ -1,8 +1,14 @@
 """QMC2 RC4 cipher and Tencent TEA for QQ Music musicex decryption."""
 
+import base64
 import math
 import struct
-from pathlib import Path
+
+ENCV2_PREFIX = b"QQMusic EncV2,Key:"
+ENCV2_KEY1 = bytes((0x33, 0x38, 0x36, 0x5A, 0x4A, 0x59, 0x21, 0x40,
+                    0x23, 0x2A, 0x24, 0x25, 0x5E, 0x26, 0x29, 0x28))
+ENCV2_KEY2 = bytes((0x2A, 0x24, 0x25, 0x5E, 0x26, 0x29, 0x28, 0x23,
+                    0x40, 0x21, 0x33, 0x38, 0x36, 0x5A, 0x4A, 0x59))
 
 
 def simple_make_key(salt: int, length: int) -> bytes:
@@ -63,7 +69,25 @@ def decrypt_tencent_tea(in_buf: bytes, key: bytes) -> bytes | None:
     return bytes(out)
 
 
+def _decrypt_encv2(raw: bytes) -> bytes | None:
+    payload = raw[len(ENCV2_PREFIX):]
+    dec1 = decrypt_tencent_tea(payload, ENCV2_KEY1)
+    if dec1 is None:
+        return None
+    dec2 = decrypt_tencent_tea(dec1, ENCV2_KEY2)
+    if dec2 is None:
+        return None
+    try:
+        return base64.b64decode(dec2)
+    except (ValueError, base64.binascii.Error):
+        return None
+
+
 def derive_key(raw_key_dec: bytes) -> bytes | None:
+    if raw_key_dec[:len(ENCV2_PREFIX)] == ENCV2_PREFIX:
+        raw_key_dec = _decrypt_encv2(raw_key_dec)
+        if raw_key_dec is None or len(raw_key_dec) < 16:
+            return None
     simple_key = simple_make_key(106, 8)
     tea_key = bytearray(16)
     for i in range(8):
