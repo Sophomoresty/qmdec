@@ -140,11 +140,16 @@ def fetch_metadata(song_mid: str) -> dict | None:
 
 
 def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
-                   cookie: str = "", uin: str = "") -> dict:
+                   cookie: str = "", uin: str = "",
+                   write_lrc: bool = False) -> dict:
     """Write complete metadata to a music file.
 
     Fields written: title, artist, albumartist, album, tracknumber, discnumber,
     year, genre, lyrics, artwork, comment (language).
+
+    If ``write_lrc`` is True, also dump the fetched lyrics next to the audio
+    file as a sibling ``.lrc`` (UTF-8, original timed LRC plus optional
+    Chinese translation appended) for external-lyric-aware players.
     """
     if meta is None:
         meta = fetch_metadata(song_mid)
@@ -177,10 +182,17 @@ def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
 
     # Lyrics
     mid = meta.get("song_mid", song_mid)
-    if mid:
-        lyrics = fetch_lyrics(mid, cookie, uin)
-        if lyrics and len(lyrics) > 20:
-            f["lyrics"] = lyrics
+    lyrics = fetch_lyrics(mid, cookie, uin) if mid else None
+    lrc_written = False
+    if lyrics and len(lyrics) > 20:
+        f["lyrics"] = lyrics
+        if write_lrc:
+            lrc_path = filepath.with_suffix(".lrc")
+            try:
+                lrc_path.write_text(lyrics, encoding="utf-8")
+                lrc_written = True
+            except OSError:
+                lrc_written = False
 
     # Cover art
     cover = fetch_cover(meta.get("cover_url", ""))
@@ -189,4 +201,4 @@ def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
 
     f.save()
     return {"ok": True, "title": meta.get("title", ""), "artist": meta.get("artist", ""),
-            "album": meta.get("album", "")}
+            "album": meta.get("album", ""), "lrc": lrc_written}

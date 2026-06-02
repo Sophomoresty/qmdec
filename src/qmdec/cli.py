@@ -39,7 +39,8 @@ def sniff_ext(data: bytes) -> str:
     return ".bin"
 
 
-def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = False) -> dict:
+def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = False,
+                 write_lrc: bool = False) -> dict:
     meta = parse_file_tail(filepath)
     if meta is None:
         return {"ok": False, "error": "unsupported file format", "file": str(filepath)}
@@ -54,11 +55,13 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = 
         return {"ok": False, "error": "empty ekey (cookie may be expired). Run: qmdec auth", "file": str(filepath)}
 
     return _decrypt_with_ekey(filepath, output_dir, ekey_b64, meta["audio_size"],
-                              meta.get("song_mid", ""), no_tag)
+                              meta.get("song_mid", ""), no_tag,
+                              write_lrc=write_lrc)
 
 
 def _decrypt_with_ekey(filepath: Path, output_dir: Path, ekey_b64: str,
-                       audio_size: int, song_mid: str, no_tag: bool) -> dict:
+                       audio_size: int, song_mid: str, no_tag: bool,
+                       write_lrc: bool = False) -> dict:
     """Decrypt a file using a known ekey (works with or without musicex tail)."""
     try:
         raw_key_dec = base64.b64decode(ekey_b64)
@@ -115,7 +118,7 @@ def _decrypt_with_ekey(filepath: Path, output_dir: Path, ekey_b64: str,
     if not no_tag and song_mid:
         try:
             from .metadata import write_metadata
-            tag_result = write_metadata(out_path, song_mid)
+            tag_result = write_metadata(out_path, song_mid, write_lrc=write_lrc)
         except Exception as e:
             tag_result = {"ok": False, "error": str(e)}
 
@@ -144,7 +147,8 @@ def cmd_decrypt(args: argparse.Namespace) -> None:
     results = []
     ok_count = 0
     for f in sorted(files):
-        r = decrypt_file(f, output_dir, config, no_tag=args.no_tag)
+        r = decrypt_file(f, output_dir, config, no_tag=args.no_tag,
+                         write_lrc=getattr(args, "lrc", False))
         results.append(r)
         if r["ok"]:
             ok_count += 1
@@ -289,7 +293,8 @@ def cmd_album(args: argparse.Namespace) -> None:
                         from .metadata import write_metadata, fetch_metadata_from_album_song
                         meta = fetch_metadata_from_album_song(song["song_info"])
                         write_metadata(final_path, song["song_mid"], meta=meta,
-                                       cookie=cookie, uin=uin)
+                                       cookie=cookie, uin=uin,
+                                       write_lrc=getattr(args, "lrc", False))
                     except Exception:
                         pass
                 return {"status": "ok", "title": song["title"]}
@@ -304,7 +309,8 @@ def cmd_album(args: argparse.Namespace) -> None:
                     from .metadata import write_metadata, fetch_metadata_from_album_song
                     meta = fetch_metadata_from_album_song(song["song_info"])
                     write_metadata(final_path, song["song_mid"], meta=meta,
-                                   cookie=cookie, uin=uin)
+                                   cookie=cookie, uin=uin,
+                                   write_lrc=getattr(args, "lrc", False))
                 except Exception:
                     pass
             return {"status": "ok", "title": song["title"]}
@@ -423,7 +429,8 @@ def cmd_download(args: argparse.Namespace) -> None:
         print(f"  Decrypting...", file=sys.stderr)
         audio_size = tmp_path.stat().st_size
         result = _decrypt_with_ekey(tmp_path, output_dir, info["ekey"], audio_size,
-                                    song["song_mid"], args.no_tag)
+                                    song["song_mid"], args.no_tag,
+                                    write_lrc=getattr(args, "lrc", False))
 
         # Verify decryption succeeded (check output file header)
         decrypt_ok = False
@@ -455,7 +462,8 @@ def cmd_download(args: argparse.Namespace) -> None:
                     if not args.no_tag:
                         try:
                             from .metadata import write_metadata
-                            tag_result = write_metadata(out_path, song["song_mid"])
+                            tag_result = write_metadata(out_path, song["song_mid"],
+                                                        write_lrc=getattr(args, "lrc", False))
                         except Exception as e:
                             tag_result = {"ok": False, "error": str(e)}
                     print(json.dumps({"ok": True, "output": str(out_path), "format": "mp3",
@@ -487,7 +495,8 @@ def cmd_download(args: argparse.Namespace) -> None:
         if not args.no_tag:
             try:
                 from .metadata import write_metadata
-                tag_result = write_metadata(out_path, song["song_mid"])
+                tag_result = write_metadata(out_path, song["song_mid"],
+                                            write_lrc=getattr(args, "lrc", False))
             except Exception as e:
                 tag_result = {"ok": False, "error": str(e)}
 
@@ -502,6 +511,8 @@ def main():
     p_decrypt.add_argument("input", help="File or directory to decrypt")
     p_decrypt.add_argument("-o", "--output", help="Output directory")
     p_decrypt.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
+    p_decrypt.add_argument("--lrc", action="store_true",
+                           help="Also write a sibling .lrc file with timed lyrics")
 
     p_search = sub.add_parser("search", help="Search songs")
     p_search.add_argument("keyword", help="Search keyword")
@@ -513,6 +524,8 @@ def main():
     p_dl.add_argument("-q", "--quality", choices=["flac", "320", "128"], default="flac")
     p_dl.add_argument("-n", "--pick", type=int, default=1, help="Pick Nth result (default: 1st)")
     p_dl.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
+    p_dl.add_argument("--lrc", action="store_true",
+                      help="Also write a sibling .lrc file with timed lyrics")
 
     sub.add_parser("auth", help="Auto-extract cookie from running QQ Music")
     sub.add_parser("doctor", help="Check configuration status")
@@ -534,6 +547,8 @@ def main():
     p_album.add_argument("-q", "--quality", choices=["flac", "320", "128"], default="flac")
     p_album.add_argument("-w", "--workers", type=int, default=16, help="Concurrent downloads")
     p_album.add_argument("--no-tag", action="store_true", help="Skip metadata tagging")
+    p_album.add_argument("--lrc", action="store_true",
+                         help="Also write sibling .lrc files with timed lyrics")
 
     args = parser.parse_args()
     commands = {
