@@ -41,6 +41,9 @@ def search_songs(keyword: str, cookie: str, uin: str, limit: int = 20) -> list[d
             "size_flac": file_info.get("size_flac", 0),
             "size_320": file_info.get("size_320mp3", 0),
             "size_128": file_info.get("size_128mp3", 0),
+            # Keep raw song dict so the caller can build metadata without
+            # round-tripping the unreliable search-by-mid endpoint.
+            "song_info": s,
         })
     return out
 

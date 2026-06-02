@@ -130,24 +130,36 @@ def fetch_cover(url: str) -> bytes | None:
         return None
 
 
-def fetch_metadata(song_mid: str) -> dict | None:
-    """Legacy compat: fetch metadata by song_mid via search."""
-    detail = fetch_song_detail(song_mid)
+def fetch_metadata(song_mid: str, cookie: str = "", uin: str = "") -> dict | None:
+    """Legacy compat: fetch metadata by song_mid via search.
+
+    Note: the underlying search-by-mid endpoint is unreliable — it can
+    return an unrelated top-search-result when the mid doesn't match.
+    Prefer passing an explicit ``meta`` to :func:`write_metadata` built
+    from a known-good ``song_info`` (via :func:`fetch_metadata_from_album_song`).
+    """
+    detail = fetch_song_detail(song_mid, cookie=cookie, uin=uin)
     if not detail:
         return None
-    meta = fetch_metadata_from_album_song(detail)
-    return meta
+    # Sanity check: the search endpoint can return a hot-result that has
+    # nothing to do with our mid. Only accept the hit if mids actually match.
+    if detail.get("mid", "") != song_mid:
+        return None
+    return fetch_metadata_from_album_song(detail)
 
 
 def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
-                   cookie: str = "", uin: str = "") -> dict:
+                   cookie: str = "", uin: str = "",
+                   song_info: dict | None = None) -> dict:
     """Write complete metadata to a music file.
 
     Fields written: title, artist, albumartist, album, tracknumber, discnumber,
     year, genre, lyrics, artwork, comment (language).
     """
+    if meta is None and song_info is not None:
+        meta = fetch_metadata_from_album_song(song_info)
     if meta is None:
-        meta = fetch_metadata(song_mid)
+        meta = fetch_metadata(song_mid, cookie=cookie, uin=uin)
     if meta is None:
         return {"ok": False, "error": "metadata not found"}
 

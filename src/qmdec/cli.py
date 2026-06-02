@@ -54,11 +54,14 @@ def decrypt_file(filepath: Path, output_dir: Path, config: dict, no_tag: bool = 
         return {"ok": False, "error": "empty ekey (cookie may be expired). Run: qmdec auth", "file": str(filepath)}
 
     return _decrypt_with_ekey(filepath, output_dir, ekey_b64, meta["audio_size"],
-                              meta.get("song_mid", ""), no_tag)
+                              meta.get("song_mid", ""), no_tag,
+                              cookie=cookie, uin=uin)
 
 
 def _decrypt_with_ekey(filepath: Path, output_dir: Path, ekey_b64: str,
-                       audio_size: int, song_mid: str, no_tag: bool) -> dict:
+                       audio_size: int, song_mid: str, no_tag: bool,
+                       cookie: str = "", uin: str = "",
+                       song_info: dict | None = None) -> dict:
     """Decrypt a file using a known ekey (works with or without musicex tail)."""
     try:
         raw_key_dec = base64.b64decode(ekey_b64)
@@ -115,7 +118,8 @@ def _decrypt_with_ekey(filepath: Path, output_dir: Path, ekey_b64: str,
     if not no_tag and song_mid:
         try:
             from .metadata import write_metadata
-            tag_result = write_metadata(out_path, song_mid)
+            tag_result = write_metadata(out_path, song_mid, cookie=cookie,
+                                        uin=uin, song_info=song_info)
         except Exception as e:
             tag_result = {"ok": False, "error": str(e)}
 
@@ -423,7 +427,9 @@ def cmd_download(args: argparse.Namespace) -> None:
         print(f"  Decrypting...", file=sys.stderr)
         audio_size = tmp_path.stat().st_size
         result = _decrypt_with_ekey(tmp_path, output_dir, info["ekey"], audio_size,
-                                    song["song_mid"], args.no_tag)
+                                    song["song_mid"], args.no_tag,
+                                    cookie=cookie, uin=uin,
+                                    song_info=song.get("song_info"))
 
         # Verify decryption succeeded (check output file header)
         decrypt_ok = False
@@ -455,7 +461,9 @@ def cmd_download(args: argparse.Namespace) -> None:
                     if not args.no_tag:
                         try:
                             from .metadata import write_metadata
-                            tag_result = write_metadata(out_path, song["song_mid"])
+                            tag_result = write_metadata(out_path, song["song_mid"],
+                                                        cookie=cookie, uin=uin,
+                                                        song_info=song.get("song_info"))
                         except Exception as e:
                             tag_result = {"ok": False, "error": str(e)}
                     print(json.dumps({"ok": True, "output": str(out_path), "format": "mp3",
@@ -487,7 +495,9 @@ def cmd_download(args: argparse.Namespace) -> None:
         if not args.no_tag:
             try:
                 from .metadata import write_metadata
-                tag_result = write_metadata(out_path, song["song_mid"])
+                tag_result = write_metadata(out_path, song["song_mid"],
+                                            cookie=cookie, uin=uin,
+                                            song_info=song.get("song_info"))
             except Exception as e:
                 tag_result = {"ok": False, "error": str(e)}
 
