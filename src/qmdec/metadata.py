@@ -35,28 +35,31 @@ def _api_call(data, cookie="", timeout=10):
 
 
 def fetch_song_detail(song_mid: str, cookie: str = "", uin: str = "") -> dict | None:
-    """Fetch song info by searching with song_mid, requires cookie."""
+    """Fetch song info by song_mid via the track-info API (exact mid lookup).
+
+    The old search-by-mid endpoint (:mod:`music.search.SearchCgiService`)
+    does fuzzy text matching — querying for a mid like ``0039MnYb0qxYhV``
+    can return unrelated songs whose metadata happens to contain the
+    substring ``b0``.  This endpoint returns the exact track for the mid.
+    """
     from .cli import load_config
     if not cookie:
         cfg = load_config()
         cookie = cfg.get("cookie", "")
         uin = cfg.get("uin", "")
     data = {
-        "comm": {"cv": 4747474, "ct": 24, "format": "json", "uin": int(uin or 0), "g_tk": 5381},
+        "comm": {"cv": 4747474, "ct": 24, "format": "json", "uin": int(uin or 0)},
         "req_1": {
-            "module": "music.search.SearchCgiService",
-            "method": "DoSearchForQQMusicDesktop",
-            "param": {"query": song_mid, "page_num": 1, "num_per_page": 5, "search_type": 0},
+            "module": "music.trackInfo.UniformRuleCtrl",
+            "method": "CgiGetTrackInfo",
+            "param": {"mids": [song_mid], "types": [0]},
         },
     }
     try:
         r = _api_call(data, cookie)
-        songs = r["req_1"]["data"]["body"]["song"]["list"]
-        for s in songs:
-            if s.get("mid") == song_mid:
-                return s
-        if songs:
-            return songs[0]
+        tracks = r["req_1"]["data"]["tracks"]
+        if tracks:
+            return tracks[0]
     except Exception:
         pass
     return None
@@ -149,11 +152,16 @@ def fetch_metadata(song_mid: str, cookie: str = "", uin: str = "") -> dict | Non
 
 
 def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
-                   cookie: str = "", uin: str = "") -> dict:
+                   cookie: str = "", uin: str = "",
+                   write_lrc: bool = False) -> dict:
     """Write complete metadata to a music file.
 
     Fields written: title, artist, albumartist, album, tracknumber, discnumber,
     year, genre, lyrics, artwork, comment (language).
+
+    If *write_lrc* is True, also dump the fetched lyrics next to the audio
+    file as a sibling ``.lrc`` (UTF-8, original timed LRC plus optional
+    Chinese translation appended) for external-lyric-aware players.
     """
     if meta is None:
         meta = fetch_metadata(song_mid, cookie, uin)
@@ -186,10 +194,18 @@ def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
 
     # Lyrics
     mid = meta.get("song_mid", song_mid)
+    lrc_written = False
     if mid:
         lyrics = fetch_lyrics(mid, cookie, uin)
         if lyrics and len(lyrics) > 20:
             f["lyrics"] = lyrics
+            if write_lrc:
+                lrc_path = filepath.with_suffix(".lrc")
+                try:
+                    lrc_path.write_text(lyrics, encoding="utf-8")
+                    lrc_written = True
+                except OSError:
+                    lrc_written = False
 
     # Cover art
     cover = fetch_cover(meta.get("cover_url", ""))
@@ -198,4 +214,4 @@ def write_metadata(filepath: Path, song_mid: str, meta: dict | None = None,
 
     f.save()
     return {"ok": True, "title": meta.get("title", ""), "artist": meta.get("artist", ""),
-            "album": meta.get("album", "")}
+            "album": meta.get("album", ""), "lrc": lrc_written}
